@@ -1,5 +1,4 @@
 // Static Reflection by BOT Man, 2018
-// Modify By fredwyan, 2019
 
 #ifndef STATIC_REFLECTION_H_
 #define STATIC_REFLECTION_H_
@@ -67,6 +66,73 @@ namespace std
 #endif //#if __cplusplus != 201402L
 
 
+namespace hash
+{
+	constexpr uint32_t djb2a(const char *s, uint32_t h = 5381)
+	{
+		return !*s ? h : djb2a(s + 1, 33 * h ^ (uint8_t)*s);
+	}
+
+	constexpr uint32_t fnv1a(const char *s, uint32_t h = 0x811C9DC5) 
+	{
+		return !*s ? h : fnv1a(s + 1, (h ^ (uint8_t)*s) * 0x01000193);
+	}
+
+	constexpr uint32_t CRC32_TABLE[] =
+	{
+		0x00000000, 0x1DB71064, 0x3B6E20C8, 0x26D930AC, 0x76DC4190, 0x6B6B51F4, 0x4DB26158, 0x5005713C,
+		0xEDB88320, 0xF00F9344, 0xD6D6A3E8, 0xCB61B38C, 0x9B64C2B0, 0x86D3D2D4, 0xA00AE278, 0xBDBDF21C };
+	constexpr uint32_t crc32(const char *s, uint32_t h = ~0) {
+#define CRC4(c, h) (CRC32_TABLE[((h) & 0xF) ^ (c)] ^ ((h) >> 4))
+		return !*s ? ~h : crc32(s + 1, CRC4((uint8_t)*s >> 4, CRC4((uint8_t)*s & 0xF, h)));
+#undef CRC4
+	}
+
+	namespace MurmurHash3 
+	{
+		constexpr uint32_t rotl(uint32_t x, int8_t r) 
+		{
+			return (x << r) | (x >> (32 - r));
+		}
+		constexpr uint32_t kmix(uint32_t k) 
+		{
+			return rotl(k * 0xCC9E2D51, 15) * 0x1B873593;
+		}
+		constexpr uint32_t hmix(uint32_t h, uint32_t k) 
+		{
+			return rotl(h ^ kmix(k), 13) * 5 + 0xE6546B64;
+		}
+		constexpr uint32_t shlxor(uint32_t x, int8_t l) 
+		{
+			return (x >> l) ^ x;
+		}
+		constexpr uint32_t fmix(uint32_t h) 
+		{
+			return shlxor(shlxor(shlxor(h, 16) * 0x85EBCA6B, 13) * 0xC2B2AE35, 16);
+		}
+		constexpr uint32_t body(const char *s, size_t n, uint32_t h) 
+		{
+			return n < 4 ? h : body(s + 4, n - 4, hmix(h, s[0] | (s[1] << 8) | (s[2] << 16) | (s[3] << 24)));
+		}
+		constexpr uint32_t tail(const char *s, size_t n, uint32_t h) 
+		{
+			return h ^ kmix(n == 3 ? s[0] | (s[1] << 8) | (s[2] << 16) : n == 2 ? s[0] | (s[1] << 8) : n == 1 ? s[0] : 0);
+		}
+		constexpr uint32_t shash(const char *s, size_t n, uint32_t seed) 
+		{
+			return fmix(tail(s + (n & ~3), n & 3, body(s, n, seed)) ^ n);
+		}
+	} // namespace MurmurHash3
+
+
+
+};
+
+constexpr uint32_t operator"" _H(const char *s, size_t size) 
+{
+	return hash::MurmurHash3::shash(s, size, 0);
+}
+
 namespace detail {
 
 	template <typename T>
@@ -109,40 +175,40 @@ namespace detail {
 		const Func& fn;
 
 
-		template<typename Tuple>
-		void invoke_one_impl(const char* strFieldName, Tuple&& t, std::index_sequence<>) const
+		template<typename Info, typename Tuple>
+		void invoke_one_impl(Info&& info, Tuple&& t, std::index_sequence<>) const
 		{
 			//invoke(FieldName, MemberPtr);
-			fn(strFieldName, value.*(std::get<0>(std::forward<Tuple>(t))) );
+			fn(std::forward<Info>(info), value.*(std::get<0>(std::forward<Tuple>(t))) );
 		}
-		template<typename Tuple, std::size_t... Index>
-		void invoke_one_impl(const char* strFieldName, Tuple&& t, std::index_sequence<Index...>) const
+		template<typename Info, typename Tuple, std::size_t... Index>
+		void invoke_one_impl(Info&& info, Tuple&& t, std::index_sequence<Index...>) const
 		{
 			//invoke(FieldName, MemberPtr,Tag);
 			//invoke(FieldName. MemberPtr,Func);
-			fn(strFieldName, value.*(std::get<0>(std::forward<Tuple>(t))), std::get<Index + 1>(std::forward<Tuple>(t))...);
+			fn(std::forward<Info>(info), value.*(std::get<0>(std::forward<Tuple>(t))), std::get<Index + 1>(std::forward<Tuple>(t))...);
 		}
 
-		template<typename Tuple>
-		void invoke_one(const char* strFieldName, Tuple&& t) const
+		template<typename Info, typename Tuple>
+		void invoke_one(Info&& info, Tuple&& t) const
 		{
 			constexpr auto size = std::tuple_size<typename std::decay<Tuple>::type>::value;
-			invoke_one_impl(strFieldName, std::forward<Tuple>(t), std::make_index_sequence<size - 1>{});
+			invoke_one_impl(std::forward<Info>(info), std::forward<Tuple>(t), std::make_index_sequence<size - 1>{});
 		}
 
-		template<typename Tuple>
-		void invoke_impl(const char* strFieldName, Tuple&& t, std::index_sequence<>) const {}
-		template<typename Tuple, std::size_t first, std::size_t... is>
-		void invoke_impl(const char* strFieldName, Tuple&& t, std::index_sequence<first, is...>) const
+		template<typename Info, typename Tuple>
+		void invoke_impl(Info&& info, Tuple&& t, std::index_sequence<>) const {}
+		template<typename Info, typename Tuple, std::size_t first, std::size_t... is>
+		void invoke_impl(Info&& info, Tuple&& t, std::index_sequence<first, is...>) const
 		{
 			//invoke(FieldName, std::tuple<MemberPtr>);
 			//invoke(FieldName, std::tuple<MemberPtr,Tag>);
 			//invoke(FieldName. std::tuple<MemberPtr,Func>);
-			invoke_one(strFieldName, std::get<first + 1>(std::forward<Tuple>(t)));
-			invoke_impl(strFieldName, std::forward<Tuple>(t), std::index_sequence<is...>{});
+			invoke_one(std::forward<Info>(info), std::get<first + 1>(std::forward<Tuple>(t)));
+			invoke_impl(std::forward<Info>(info), std::forward<Tuple>(t), std::index_sequence<is...>{});
 		}
 
-		template<typename Tuple>
+		template<typename Info, typename Tuple>
 		void operator()(Tuple&& field_schema) const
 		{
 			using FieldSchema = std::decay_t<decltype(field_schema)>;
@@ -190,40 +256,40 @@ namespace detail {
 		const Func& fn;
 
 
-		template<typename Tuple>
-		bool invoke_one_impl(const char* strFieldName, Tuple&& t, std::index_sequence<>) const
+		template<typename Info, typename Tuple>
+		bool invoke_one_impl(Info&& info, Tuple&& t, std::index_sequence<>) const
 		{
 			//invoke(FieldName, MemberPtr);
-			return fn(strFieldName, value.*(std::get<0>(std::forward<Tuple>(t))));
+			return fn(std::forward<Info>(info), value.*(std::get<0>(std::forward<Tuple>(t))));
 		}
 
-		template<typename Tuple, std::size_t... Index>
-		bool invoke_one_impl(const char* strFieldName, Tuple&& t, std::index_sequence<Index...>) const
+		template<typename Info, typename Tuple, std::size_t... Index>
+		bool invoke_one_impl(Info&& info, Tuple&& t, std::index_sequence<Index...>) const
 		{
 			//invoke(FieldName, MemberPtr,Tag);
 			//invoke(FieldName. MemberPtr,Func);
-			return fn(strFieldName, value.*(std::get<0>(std::forward<Tuple>(t))), std::get<Index + 1>(std::forward<Tuple>(t))...);
+			return fn(std::forward<Info>(info), value.*(std::get<0>(std::forward<Tuple>(t))), std::get<Index + 1>(std::forward<Tuple>(t))...);
 		}
 
-		template<typename Tuple>
-		bool invoke_one(const char* strFieldName, Tuple&& t) const
+		template<typename Info, typename Tuple>
+		bool invoke_one(Info&& info, Tuple&& t) const
 		{
 			constexpr auto size = std::tuple_size<typename std::decay<Tuple>::type>::value;
-			return invoke_one_impl(strFieldName, std::forward<Tuple>(t), std::make_index_sequence<size - 1>{});
+			return invoke_one_impl(std::forward<Info>(info), std::forward<Tuple>(t), std::make_index_sequence<size - 1>{});
 		}
 
-		template<typename Tuple>
-		bool invoke_impl(const char* strFieldName, Tuple&& t, std::index_sequence<>) const { return false;}
-		template<typename Tuple, std::size_t first, std::size_t... is>
-		bool invoke_impl(const char* strFieldName, Tuple&& t, std::index_sequence<first, is...>) const
+		template<typename Info, typename Tuple>
+		bool invoke_impl(Info&& info, Tuple&& t, std::index_sequence<>) const { return false;}
+		template<typename Info, typename Tuple, std::size_t first, std::size_t... is>
+		bool invoke_impl(Info&& info, Tuple&& t, std::index_sequence<first, is...>) const
 		{
 			//invoke(FieldName, std::tuple<MemberPtr>);
 			//invoke(FieldName, std::tuple<MemberPtr,Tag>);
 			//invoke(FieldName. std::tuple<MemberPtr,Func>);
-			bool bInvoke = invoke_one(strFieldName, std::get<first + 1>(std::forward<Tuple>(t)));
+			bool bInvoke = invoke_one(std::forward<Info>(info), std::get<first + 1>(std::forward<Tuple>(t)));
 
 			//first invoke all, then all result ||;
-			return invoke_impl(strFieldName, std::forward<Tuple>(t), std::index_sequence<is...>{}) || bInvoke;
+			return invoke_impl(std::forward<Info>(info), std::forward<Tuple>(t), std::index_sequence<is...>{}) || bInvoke;
 		}
 
 		template<typename Tuple>
@@ -266,6 +332,8 @@ struct StructSchema<ThisStruct>				  			\
 	}													\
 };
 
+#define MAKE_FIELD_INFO(FieldName)\
+  std::make_tuple(FieldName,FieldName##_H)
 
 #define BIND_FIELD(StructField) \
   std::make_tuple(&_Struct::StructField)
@@ -277,19 +345,19 @@ struct StructSchema<ThisStruct>				  			\
   std::make_tuple(&_Struct::StructField, Func)
 
 #define DEFINE_STRUCT_FIELD_BIND(FieldName, ...) \
-  std::make_tuple(FieldName, __VA_ARGS__ )
+  std::make_tuple(MAKE_FIELD_INFO(FieldName), __VA_ARGS__ )
 
 #define DEFINE_STRUCT_FIELD(StructField, FieldName) \
-  std::make_tuple(FieldName, BIND_FIELD(StructField) )
+  std::make_tuple(MAKE_FIELD_INFO(FieldName), BIND_FIELD(StructField) )
 
 #define DEFINE_STRUCT_FIELD_TAG(StructField, FieldName, Tag) \
-  std::make_tuple(FieldName, BIND_FIELD_TAG(StructField, Tag) )
+  std::make_tuple(MAKE_FIELD_INFO(FieldName), BIND_FIELD_TAG(StructField, Tag) )
 
 #define DEFINE_STRUCT_FIELD_FUNC(StructField, FieldName, Func) \
-  std::make_tuple(FieldName, BIND_FIELD_FUNC(StructField, Func) )
+  std::make_tuple(MAKE_FIELD_INFO(FieldName), BIND_FIELD_FUNC(StructField, Func) )
 
 
-//every FieldSchema Will MakeTuple Like
+//every Field Will MakeTuple Like
 //std::tuple<FieldName, std::tuple<MemberPtr>, std::tuple<MemberPtr,Tag> , std::tuple<MemberPtr,Func> >
 
 
@@ -300,7 +368,7 @@ inline constexpr void ForEachField(T&& value, Fn&& fn)
 	constexpr auto struct_schema = StructSchema<std::decay_t<T>>::GetSchema();
 	static_assert(std::tuple_size<decltype(struct_schema)>::value != 0,
 		"StructSchema<T>() for type T should be specialized to return "
-		"FieldSchema tuples, like tuple<field_name,tuple<&T::field>,tuple<&T::field,Tag> >, tuple<field_name,tuple<&T::field> >...");
+		"FieldSchema tuples, like ((&T::field, field_name), ...)");
 	detail::ForEachStructSchemaLambda<T, Fn> lambda{ std::forward<T>(value), std::forward<Fn>(fn) };
 	detail::ForEachStructSchema(struct_schema, std::move(lambda));
 }
@@ -311,11 +379,9 @@ inline constexpr void FindInField(T&& value, Fn&& fn)
 	constexpr auto struct_schema = StructSchema<std::decay_t<T>>::GetSchema();
 	static_assert(std::tuple_size<decltype(struct_schema)>::value != 0,
 		"StructSchema<T>() for type T should be specialized to return "
-		"FieldSchema tuples, like tuple<field_name,tuple<&T::field>,tuple<&T::field,Tag> >, tuple<field_name,tuple<&T::field> >...");
+		"FieldSchema tuples, like ((&T::field, field_name), ...)");
 	detail::FindInStructSchemaLambda<T, Fn> lambda{ std::forward<T>(value), std::forward<Fn>(fn) };
 	detail::FindInStructSchema(struct_schema, std::move(lambda));
 }
-
-
 
 #endif  // STATIC_REFLECTION_H_
