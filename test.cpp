@@ -42,10 +42,12 @@ constexpr auto FUNCCC = [](tinyxml2::XMLElement*, int* field)->void
 
 
 DEFINE_STRUCT_SCHEMA(ActionFlowLCast,
-                     DEFINE_STRUCT_FIELD_TAG(iWaitTimeQianYao, "breakTime", a),
+                     DEFINE_STRUCT_FIELD_BIND("breakTime", 
+							BIND_FIELD_TAG(iWaitTimeQianYao, ELF_HASH_TAG),
+							BIND_FIELD(iWaitTimeMoveQianYao)),
                      DEFINE_STRUCT_FIELD_TAG(iWaitTimeCast, "castTime", ELF_HASH_TAG),
-         				DEFINE_STRUCT_FIELD_TAG(iWaitTimeFinish, "endTime", FUNCCC),
-                     DEFINE_STRUCT_FIELD(iWaitTimeMoveQianYao, "waitTimeMoveQianYao"),
+         			 DEFINE_STRUCT_FIELD_TAG(iWaitTimeFinish, "endTime", FUNCCC),
+                     
                      DEFINE_STRUCT_FIELD(stOnStartOut, "onStart"),
                      DEFINE_STRUCT_FIELD(stOnQianYaoOut, "onBreak"),
                      DEFINE_STRUCT_FIELD(stOnCastOut, "onCast"),
@@ -153,25 +155,26 @@ void xml_value_to_field(tinyxml2::XMLElement* pVarE, ActionFlowOut* field)
 struct ForEachXMLLambda
 {
     tinyxml2::XMLElement* pVarE;
-    std::string field_name;
-    template<typename Field>
-    bool operator()(const char* this_field_name, Field&& this_field) const
+	const char* field_name;
+	std::size_t field_name_hash;
+    template<typename FieldInfo, typename Field>
+    bool operator()(FieldInfo&& this_field_info, Field&& this_field) const
     {
-		printf("test:%s\n", this_field_name);
-		if (field_name != this_field_name)
+		printf("test:%s\n", std::get<0>(this_field_info) );
+		if (field_name_hash != std::get<1>(this_field_info))
 			return false;
-		printf("vist:%s\n", this_field_name);
+		printf("vist:%s\n", std::get<0>(this_field_info));
 		xml_value_to_field(pVarE, &this_field);
 		return true;
     }
 
-	template<typename Field, typename Tag>
-	bool operator()(const char* this_field_name, Field&& this_field, Tag&& tag) const
+	template<typename FieldInfo, typename Field, typename Tag>
+	bool operator()(FieldInfo&& this_field_info, Field&& this_field, Tag&& tag) const
 	{
-		printf("test:%s\n", this_field_name);
-		if (field_name != this_field_name)
+		printf("test:%s\n", std::get<0>(this_field_info));
+		if (field_name_hash != std::get<1>(this_field_info))
 			return false;
-		printf("vist:%s\n", this_field_name);
+		printf("vist:%s\n", std::get<0>(this_field_info));
 		xml_value_to_field(pVarE, &this_field, std::forward<Tag>(tag) );
 		return true;
 	}
@@ -188,7 +191,8 @@ void xmlElement_to_struct(tinyxml2::XMLElement* pE, T& refStruct)
 		if (pStrName != NULL)
 		{
 			std::string field_name = pStrName;
-			FindInField(refStruct, ForEachXMLLambda{pVarE, field_name} );
+			
+			FindInField(refStruct, ForEachXMLLambda{ pVarE, field_name.c_str(), hash::MurmurHash3::shash(field_name.c_str(), field_name.size(), 0) });
 		}
 
 
